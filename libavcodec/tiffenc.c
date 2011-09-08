@@ -31,6 +31,7 @@
 #endif
 #include "bytestream.h"
 #include "tiff.h"
+#include "tiff_data.h"
 #include "rle.h"
 #include "lzw.h"
 #include "put_bits.h"
@@ -61,6 +62,12 @@ typedef struct TiffEncoderContext {
     int buf_size;                       ///< buffer size
     uint16_t subsampling[2];            ///< YUV subsampling factors
     struct LZWEncodeState *lzws;        ///< LZW Encode state
+
+    uint16_t *geokey_dict;
+    char *geo_ascii_params;
+    int geo_ascii_params_size;
+    double *geo_double_params;
+    int geo_double_params_size;
 } TiffEncoderContext;
 
 
@@ -136,6 +143,165 @@ static void add_entry1(TiffEncoderContext * s,
     uint16_t w = val;
     uint32_t dw= val;
     add_entry(s, tag, type, 1, type == TIFF_SHORT ? (void *)&w : (void *)&dw);
+}
+
+static int str2doubles(const char *str, double **dr ) {
+    double *dp = NULL, *t;
+    double d;
+    int i = 0;
+
+    while (sscanf(str, "%lf", &d)) {
+        t = av_realloc(dp, ++i * sizeof(double));
+        if (!t) {
+            i = AVERROR(ENOMEM);
+            break;
+        }
+        dp = t;
+        memcpy(&dp[i- 1], &d, sizeof(double));
+        str = strchr(str, ',');
+        if (!str) break;
+        str++;
+    }
+    if (i <= 0)
+        av_freep(&dp);
+    *dr = dp;
+    return i;
+}
+
+static int get_geokeyval(int key, const char *val) {
+    int ret, i;
+
+    if (!strcmp("undefined", val))
+        return TIFF_GEO_KEY_UNDEFINED;
+    if (!strcmp("User-Defined", val))
+        return TIFF_GEO_KEY_USER_DEFINED;
+    if (sscanf(val, "Unknown-%d", &ret))
+        return ret;
+    switch (key) {
+    case TIFF_GT_MODEL_TYPE_GEOKEY:
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_gtmodeltypecodes); i++)
+            if (!strcmp(ff_tiff_gtmodeltypecodes[i], val))
+                return i + TIFF_GTMODELTYPE_OFFSET;
+    case TIFF_GT_RASTER_TYPE_GEOKEY:
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_rastertypecodes); i++)
+            if (!strcmp(ff_tiff_rastertypecodes[i], val))
+                return i + TIFF_RASTERTYPE_OFFSET;
+        break;
+    case TIFF_GEOG_LINEAR_UNITS_GEOKEY:
+    case TIFF_PROJ_LINEAR_UNITS_GEOKEY:
+    case TIFF_VERTICAL_UNITS_GEOKEY:
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_linearunitcodes); i++)
+            if (!strcmp(ff_tiff_linearunitcodes[i], val))
+                return i + TIFF_LINEARUNIT_OFFSET;
+    case TIFF_GEOG_ANGULAR_UNITS_GEOKEY:
+    case TIFF_GEOG_AZIMUTH_UNITS_GEOKEY:
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_angularunitcodes); i++)
+            if (!strcmp(ff_tiff_angularunitcodes[i], val))
+                return i + TIFF_ANGULARUNIT_OFFSET;
+        break;
+    case TIFF_GEOGRAPHIC_TYPE_GEOKEY:
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_gcstypecodes); i++)
+            if (!strcmp(ff_tiff_gcstypecodes[i], val))
+                return i + TIFF_GCSTYPE_OFFSET;
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_gcsetypecodes); i++)
+            if (!strcmp(ff_tiff_gcsetypecodes[i], val))
+                return i + TIFF_GCSETYPE_OFFSET;
+        break;
+    case TIFF_GEOG_GEODETIC_DATUM_GEOKEY:
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_geodeticdatumcodes); i++)
+            if (!strcmp(ff_tiff_geodeticdatumcodes[i], val))
+                return i + TIFF_GEODETICDATUM_OFFSET;
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_geodeticdatumecodes); i++)
+            if (!strcmp(ff_tiff_geodeticdatumecodes[i], val))
+                return i + TIFF_GEODETICDATUME_OFFSET;
+        break;
+    case TIFF_GEOG_ELLIPSOID_GEOKEY:
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_ellipsoidcodes); i++)
+            if (!strcmp(ff_tiff_ellipsoidcodes[i], val))
+                return i + TIFF_ELLIPSOID_OFFSET;
+        break;
+    case TIFF_GEOG_PRIME_MERIDIAN_GEOKEY:
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_primemeridiancodes); i++)
+            if (!strcmp(ff_tiff_primemeridiancodes[i], val))
+                return i + TIFF_PRIMEMERIDIAN_OFFSET;
+        break;
+    case TIFF_PROJECTED_CS_TYPE_GEOKEY:
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_proj_cs_type_codes); i++)
+            if (!strcmp(ff_tiff_proj_cs_type_codes[i].name, val))
+                return ff_tiff_proj_cs_type_codes[i].key;
+        break;
+    case TIFF_PROJECTION_GEOKEY:
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_projection_codes); i++)
+            if (!strcmp(ff_tiff_projection_codes[i].name, val))
+                return ff_tiff_projection_codes[i].key;
+        break;
+    case TIFF_PROJ_COORD_TRANS_GEOKEY:
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_coord_trans_aliases); i++)
+            if (!strcmp(ff_tiff_coord_trans_aliases[i].alias, val))
+                val = ff_tiff_coord_trans_aliases[i].name;
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_coord_trans_codes); i++)
+            if (!strcmp(ff_tiff_coord_trans_codes[i], val))
+                return i + COORD_TRANS_OFFSET;
+        break;
+    }
+    return -1;
+}
+
+static int add_geokey(TiffEncoderContext *s, int id, int type, const char *val) {
+    int n = s->geokey_dict[3] + 1;
+    void *new_ptr;
+    double *dp;
+    int i;
+
+    new_ptr = av_realloc(s->geokey_dict, 4 * (n + 1) * sizeof(uint16_t));
+    if (!new_ptr)
+        return AVERROR(ENOMEM);
+    s->geokey_dict = new_ptr;
+
+    s->geokey_dict[4 * n]     = id;
+    s->geokey_dict[4 * n + 1] = type;
+    switch(type) {
+    case GEOTIFF_SHORT:
+        s->geokey_dict[4 * n + 2] = 1;
+        s->geokey_dict[4 * n + 3] = get_geokeyval(id, val);
+        break;
+    case GEOTIFF_DOUBLE:
+        dp = NULL;
+        i = str2doubles(val, &dp);
+        if (i < 0)
+            return i;
+        s->geokey_dict[4 * n + 2] = i;
+
+        new_ptr = av_realloc(s->geo_double_params, sizeof(double) * (s->geo_double_params_size + i));
+        if (!new_ptr)
+            return AVERROR(ENOMEM);
+
+        s->geo_double_params = new_ptr;
+        memcpy(&s->geo_double_params[s->geo_double_params_size], dp, sizeof(double) * i);
+
+        av_freep(&dp);
+        s->geokey_dict[4 * n + 3] = s->geo_double_params_size;
+        s->geo_double_params_size += i;
+        break;
+    case GEOTIFF_STRING:
+        s->geokey_dict[4 * n + 2] = strlen(val) + 1;
+        s->geokey_dict[4 * n + 3] = s->geo_ascii_params_size;
+
+        if (s->geo_ascii_params_size == 0)
+            s->geo_ascii_params_size++;
+
+        new_ptr = av_realloc(s->geo_ascii_params, s->geo_ascii_params_size + strlen(val) + 1);
+        if (!new_ptr)
+            return AVERROR(ENOMEM);
+        s->geo_ascii_params = new_ptr;
+        strcpy(&s->geo_ascii_params[s->geo_ascii_params_size - 1], val);
+        s->geo_ascii_params_size += strlen(val) + 1;
+        s->geo_ascii_params[s->geo_ascii_params_size - 2] = '|';
+        s->geo_ascii_params[s->geo_ascii_params_size - 1] = '\0';
+        break;
+    }
+    s->geokey_dict[3]++;
+    return 0;
 }
 
 /**
@@ -216,6 +382,7 @@ static int encode_frame(AVCodecContext * avctx, unsigned char *buf,
     int is_yuv = 0;
     uint8_t *yuv_line = NULL;
     int shift_h, shift_v;
+    AVDictionaryEntry *tag = NULL;
 
     s->avctx = avctx;
     s->buf_start = buf;
@@ -226,6 +393,54 @@ static int encode_frame(AVCodecContext * avctx, unsigned char *buf,
     p->pict_type = AV_PICTURE_TYPE_I;
     p->key_frame = 1;
     avctx->coded_frame= &s->picture;
+
+    if (tag = av_dict_get(s->picture.metadata, "GeoTIFF_Version", NULL, AV_DICT_IGNORE_SUFFIX)) {
+        s->geokey_dict = av_mallocz(sizeof(uint16_t) * 4);
+        if (!s->geokey_dict) {
+            av_log(s->avctx, AV_LOG_ERROR, "Error allocating temporary buffer\n");
+            goto fail;
+        }
+
+        sscanf(tag->value, "%" SCNd16, &s->geokey_dict[0]);
+
+        /*remove aliases*/
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_key_aliases); i++) {
+            if (tag = av_dict_get(s->picture.metadata, ff_tiff_key_aliases[i].alias, NULL, 0)) {
+                if (av_dict_set(&s->picture.metadata, ff_tiff_key_aliases[i].name, tag->value, 0) < 0) {
+                    av_log(s->avctx, AV_LOG_ERROR, "Error allocating temporary buffer\n");
+                    goto fail;
+                }
+            }
+        }
+
+        if (tag = av_dict_get(s->picture.metadata, "GeoTIFF_Key_Revision", NULL, AV_DICT_IGNORE_SUFFIX))
+            sscanf(tag->value, "%" SCNd16 ".%" SCNd16, &s->geokey_dict[1], &s->geokey_dict[2]);
+
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_confkeys); i++)
+            if (tag = av_dict_get(s->picture.metadata, ff_tiff_confkeys[i].name, NULL, AV_DICT_IGNORE_SUFFIX))
+                if (add_geokey(s, i + TIFF_CONF_KEY_ID_OFFSET, ff_tiff_confkeys[i].type, tag->value) < 0) {
+                    av_log(s->avctx, AV_LOG_ERROR, "Error allocating temporary buffer\n");
+                    goto fail;
+                }
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_geogkeys); i++)
+            if (tag = av_dict_get(s->picture.metadata, ff_tiff_geogkeys[i].name, NULL, AV_DICT_IGNORE_SUFFIX))
+                if (add_geokey(s, i + TIFF_GEOG_KEY_ID_OFFSET, ff_tiff_geogkeys[i].type, tag->value) < 0) {
+                    av_log(s->avctx, AV_LOG_ERROR, "Error allocating temporary buffer\n");
+                    goto fail;
+                }
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_projkeys); i++)
+            if (tag = av_dict_get(s->picture.metadata, ff_tiff_projkeys[i].name, NULL, AV_DICT_IGNORE_SUFFIX))
+                if (add_geokey(s, i + TIFF_PROJ_KEY_ID_OFFSET, ff_tiff_projkeys[i].type, tag->value) < 0) {
+                    av_log(s->avctx, AV_LOG_ERROR, "Error allocating temporary buffer\n");
+                    goto fail;
+                }
+        for (i = 0; i < FF_ARRAY_ELEMS(ff_tiff_vertkeys); i++)
+            if (tag = av_dict_get(s->picture.metadata, ff_tiff_vertkeys[i].name, NULL, AV_DICT_IGNORE_SUFFIX))
+                if (add_geokey(s, i + TIFF_VERT_KEY_ID_OFFSET, ff_tiff_vertkeys[i].type, tag->value) < 0) {
+                    av_log(s->avctx, AV_LOG_ERROR, "Error allocating temporary buffer\n");
+                    goto fail;
+                }
+    }
 
     s->compr = TIFF_PACKBITS;
     if (avctx->compression_level == 0) {
@@ -427,6 +642,41 @@ static int encode_frame(AVCodecContext * avctx, unsigned char *buf,
         add_entry(s, TIFF_YCBCR_SUBSAMPLING, TIFF_SHORT,    2, s->subsampling);
         add_entry(s, TIFF_REFERENCE_BW,      TIFF_RATIONAL, 6, refbw);
     }
+
+    if (tag = av_dict_get(s->picture.metadata, "ModelTiepointTag", NULL, AV_DICT_IGNORE_SUFFIX)) {
+        double *dp = NULL;
+        if ((i = str2doubles(tag->value, &dp)) < 0) {
+            av_log(s->avctx, AV_LOG_ERROR, "Error allocating temporary buffer\n");
+            goto fail;
+        }
+        add_entry(s, TIFF_MODEL_TIEPOINT, TIFF_DOUBLE, i, dp);
+        av_freep(&dp);
+    }
+    if (tag = av_dict_get(s->picture.metadata, "ModelPixelScaleTag", NULL, AV_DICT_IGNORE_SUFFIX)) {
+        double *dp = NULL;
+        if ((i = str2doubles(tag->value, &dp)) < 0) {
+            av_log(s->avctx, AV_LOG_ERROR, "Error allocating temporary buffer\n");
+            goto fail;
+        }
+        add_entry(s, TIFF_MODEL_PIXEL_SCALE, TIFF_DOUBLE, i, dp);
+        av_freep(&dp);
+    }
+    if (tag = av_dict_get(s->picture.metadata, "ModelTransformationTag", NULL, AV_DICT_IGNORE_SUFFIX)) {
+        double *dp = NULL;
+        if ((i = str2doubles(tag->value, &dp)) < 0) {
+            av_log(s->avctx, AV_LOG_ERROR, "Error allocating temporary buffer\n");
+            goto fail;
+        }
+        add_entry(s, TIFF_MODEL_TRANSFORMATION, TIFF_DOUBLE, i, dp);
+        av_freep(&dp);
+    }
+
+    if (s->geokey_dict) {
+        add_entry(s, TIFF_GEO_KEY_DIRECTORY, TIFF_SHORT,  (s->geokey_dict[3] + 1) * 4, s->geokey_dict);
+        add_entry(s, TIFF_GEO_DOUBLE_PARAMS, TIFF_DOUBLE, s->geo_double_params_size,   s->geo_double_params);
+        add_entry(s, TIFF_GEO_ASCII_PARAMS,  TIFF_STRING, s->geo_ascii_params_size,    s->geo_ascii_params);
+    }
+
     bytestream_put_le32(&offset, ptr - buf);    // write offset to dir
 
     if (check_size(s, 6 + s->num_entries * 12))
@@ -441,6 +691,10 @@ fail:
     av_free(strip_sizes);
     av_free(strip_offsets);
     av_free(yuv_line);
+    av_free(s->geokey_dict);
+    av_free(s->geo_ascii_params);
+    av_free(s->geo_double_params);
+
     return ret;
 }
 

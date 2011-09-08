@@ -81,5 +81,8 @@ extern const Key_name ff_tiff_projection_codes[298];
 
 #define COORD_TRANS_OFFSET 7001
 extern const char *const ff_tiff_coord_trans_codes[27];
+extern const Key_alias ff_tiff_coord_trans_aliases[9];
+
+extern const Key_alias ff_tiff_key_aliases[4];
 
 #endif

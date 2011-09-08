@@ -174,4 +174,9 @@ typedef struct Geokey {
     const int type;
 } Geokey;
 
+typedef struct Key_alias {
+    const char *const alias;
+    const char *const name;
+} Key_alias;
+
 #endif /* AVCODEC_TIFF_H */

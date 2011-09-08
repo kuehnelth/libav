@@ -1822,3 +1822,22 @@ const char *const ff_tiff_coord_trans_codes[] = {
     "CT_NewZealandMapGrid",
     "CT_TransvMercator_SouthOriented"
 };
+
+const Key_alias ff_tiff_coord_trans_aliases[] = {
+    {"CT_AlaskaConformal"            , "CT_TransvMercator_Modified_Alaska"},
+    {"CT_TransvEquidistCylindrical"  , "CT_CassiniSoldner"},
+    {"CT_ObliqueMercator_Hotine"     , "CT_ObliqueMercator"},
+    {"CT_SwissObliqueCylindrical"    , "CT_ObliqueMercator_Rosenmund"},
+    {"CT_GaussBoaga"                 , "CT_TransverseMercator"},
+    {"CT_GaussKruger"                , "CT_TransverseMercator"},
+    {"CT_LambertConfConic"           , "CT_LambertConfConic_2SP "},
+    {"CT_LambertConfConic_Helmert"   , "CT_LambertConfConic_1SP"},
+    {"CT_SouthOrientedGaussConformal", "CT_TransvMercator_SouthOriented"}
+};
+
+const Key_alias ff_tiff_key_aliases[] = {
+    {"ProjStdParallelGeoKey"  , "ProjStdParallel1GeoKey"},
+    {"ProjOriginLongGeoKey"   , "ProjNatOriginLongGeoKey"},
+    {"ProjOriginLatGeoKey"    , "ProjNatOriginLatGeoKey"},
+    {"ProjScaleAtOriginGeoKey", "ProjScaleAtNatOriginGeoKey"}
+};
