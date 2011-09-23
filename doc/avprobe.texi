@@ -108,6 +108,13 @@ multimedia stream.
 Each media stream information is printed within a dedicated section
 with name "STREAM".
 
+@item -show_frames
+Show information about each video frame contained in the input multimedia
+stream.
+
+The information for each single frame is printed within a dedicated
+section with name "FRAME".
+
 @end table
 @c man end
 

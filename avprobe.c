@@ -35,6 +35,7 @@ const int program_birth_year = 2007;
 static int do_show_format  = 0;
 static int do_show_packets = 0;
 static int do_show_streams = 0;
+static int do_show_frames  = 0;
 
 static int show_value_unit              = 0;
 static int use_value_prefix             = 0;
@@ -150,14 +151,65 @@ static void show_packet(AVFormatContext *fmt_ctx, AVPacket *pkt)
     printf("[/PACKET]\n");
 }
 
+static void show_frame(AVFrame *frame)
+{
+    char val_str[128];
+    AVDictionaryEntry *tag = NULL;
+
+    printf("[FRAME]\n");
+    printf("pict_type=%c\n",              av_get_picture_type_char(frame->pict_type));
+    printf("coded_picture_number=%d\n",   frame->coded_picture_number);
+    printf("display_picture_number=%d\n", frame->display_picture_number);
+    printf("interlaced_frame=%d\n",       frame->interlaced_frame);
+    printf("top_field_first=%d\n",        frame->top_field_first);
+    printf("repeat_pict=%d\n",            frame->repeat_pict);
+    printf("reference=%d\n",              frame->reference);
+    printf("key_frame=%d\n",              frame->key_frame);
+    printf("pts=%s\n",                    ts_value_string (val_str, sizeof(val_str), frame->pts));
+
+    while ((tag = av_dict_get(frame->metadata, "", tag, AV_DICT_IGNORE_SUFFIX)))
+        printf("TAG:%s=%s\n", tag->key, tag->value);
+    printf("[/FRAME]\n");
+}
+
+static int get_video_frame(AVFormatContext *fmt_ctx, AVFrame *frame,
+                           AVPacket *pkt)
+{
+    AVCodecContext *dec_ctx = fmt_ctx->streams[pkt->stream_index]->codec;
+    int got_picture = 0;
+
+    if (dec_ctx->codec_id   != CODEC_ID_NONE &&
+        dec_ctx->codec_type == AVMEDIA_TYPE_VIDEO)
+        avcodec_decode_video2(dec_ctx, frame, &got_picture, pkt);
+    return got_picture;
+}
+
 static void show_packets(AVFormatContext *fmt_ctx)
 {
     AVPacket pkt;
+    int i;
+    AVFrame frame;
 
     av_init_packet(&pkt);
 
-    while (!av_read_frame(fmt_ctx, &pkt))
-        show_packet(fmt_ctx, &pkt);
+    while (!av_read_frame(fmt_ctx, &pkt)) {
+        if (do_show_packets)
+            show_packet(fmt_ctx, &pkt);
+        if (do_show_frames &&
+            get_video_frame(fmt_ctx, &frame, &pkt)) {
+            show_frame(&frame);
+            av_destruct_packet(&pkt);
+        }
+    }
+    av_init_packet(&pkt);
+    pkt.data = NULL;
+    pkt.size = 0;
+    //Flush remaining frames that are cached in the decoder
+    for (i = 0; i < fmt_ctx->nb_streams; i++) {
+        pkt.stream_index = i;
+        while (get_video_frame(fmt_ctx, &frame, &pkt))
+            show_frame(&frame);
+    }
 }
 
 static void show_stream(AVFormatContext *fmt_ctx, int stream_idx)
@@ -315,7 +367,7 @@ static int probe_file(const char *filename)
     if ((ret = open_input_file(&fmt_ctx, filename)))
         return ret;
 
-    if (do_show_packets)
+    if (do_show_packets || do_show_frames)
         show_packets(fmt_ctx);
 
     if (do_show_streams)
@@ -325,6 +377,9 @@ static int probe_file(const char *filename)
     if (do_show_format)
         show_format(fmt_ctx);
 
+    for (i = 0; i < fmt_ctx->nb_streams; i++)
+        if (fmt_ctx->streams[i]->codec->codec_id != CODEC_ID_NONE)
+            avcodec_close(fmt_ctx->streams[i]->codec);
     avformat_close_input(&fmt_ctx);
     return 0;
 }
@@ -389,6 +444,7 @@ static const OptionDef options[] = {
     { "show_format",  OPT_BOOL, {(void*)&do_show_format} , "show format/container info" },
     { "show_packets", OPT_BOOL, {(void*)&do_show_packets}, "show packets info" },
     { "show_streams", OPT_BOOL, {(void*)&do_show_streams}, "show streams info" },
+    { "show_frames",  OPT_BOOL, {(void*)&do_show_frames} , "show frames info" },
     { "default", HAS_ARG | OPT_AUDIO | OPT_VIDEO | OPT_EXPERT, {(void*)opt_default}, "generic catch all option", "" },
     { NULL, },
 };
