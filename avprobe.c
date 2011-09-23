@@ -35,6 +35,7 @@ const int program_birth_year = 2007;
 static int do_show_format  = 0;
 static int do_show_packets = 0;
 static int do_show_streams = 0;
+static int do_show_frames  = 0;
 
 static int show_value_unit              = 0;
 static int use_value_prefix             = 0;
@@ -150,14 +151,51 @@ static void show_packet(AVFormatContext *fmt_ctx, AVPacket *pkt)
     printf("[/PACKET]\n");
 }
 
+static int show_frame(AVFormatContext *fmt_ctx, AVPacket *pkt)
+{
+    AVFrame picture;
+    int got_picture = 0;
+    char val_str[128];
+    AVDictionaryEntry *tag = NULL;
+    AVCodecContext *dec_ctx = fmt_ctx->streams[pkt->stream_index]->codec;
+
+    if (dec_ctx->codec_type != AVMEDIA_TYPE_VIDEO ||
+        avcodec_decode_video2(dec_ctx, &picture, &got_picture, pkt) <= 0 ||
+        !got_picture)
+        return got_picture;
+
+    printf("[FRAME]\n");
+    printf("key_frame=%d\n",     picture.key_frame);
+    printf("pts=%s\n",           ts_value_string (val_str, sizeof(val_str), picture.pts));
+
+    while ((tag = av_dict_get(picture.metadata, "", tag, AV_DICT_IGNORE_SUFFIX)))
+        printf("TAG:%s=%s\n", tag->key, tag->value);
+    printf("[/FRAME]\n");
+
+    return got_picture;
+}
+
 static void show_packets(AVFormatContext *fmt_ctx)
 {
     AVPacket pkt;
+    int i;
 
     av_init_packet(&pkt);
 
-    while (!av_read_frame(fmt_ctx, &pkt))
-        show_packet(fmt_ctx, &pkt);
+    while (!av_read_frame(fmt_ctx, &pkt)) {
+        if (do_show_packets)
+            show_packet(fmt_ctx, &pkt);
+        if (do_show_frames)
+            show_frame(fmt_ctx, &pkt);
+        av_destruct_packet(&pkt);
+    }
+    av_init_packet(&pkt);
+    pkt.data = NULL;
+    pkt.size = 0;
+    for (i = 0; i < fmt_ctx->nb_streams; i++) {
+        pkt.stream_index = i;
+        while (show_frame(fmt_ctx, &pkt));
+    }
 }
 
 static void show_stream(AVFormatContext *fmt_ctx, int stream_idx)
@@ -315,7 +353,7 @@ static int probe_file(const char *filename)
     if ((ret = open_input_file(&fmt_ctx, filename)))
         return ret;
 
-    if (do_show_packets)
+    if (do_show_packets || do_show_frames)
         show_packets(fmt_ctx);
 
     if (do_show_streams)
@@ -325,6 +363,8 @@ static int probe_file(const char *filename)
     if (do_show_format)
         show_format(fmt_ctx);
 
+    for (i = 0; i < fmt_ctx->nb_streams; i++)
+        avcodec_close(fmt_ctx->streams[i]->codec);
     av_close_input_file(fmt_ctx);
     return 0;
 }
@@ -389,6 +429,7 @@ static const OptionDef options[] = {
     { "show_format",  OPT_BOOL, {(void*)&do_show_format} , "show format/container info" },
     { "show_packets", OPT_BOOL, {(void*)&do_show_packets}, "show packets info" },
     { "show_streams", OPT_BOOL, {(void*)&do_show_streams}, "show streams info" },
+    { "show_frames",  OPT_BOOL, {(void*)&do_show_frames} , "show frames info" },
     { "default", HAS_ARG | OPT_AUDIO | OPT_VIDEO | OPT_EXPERT, {(void*)opt_default}, "generic catch all option", "" },
     { NULL, },
 };
