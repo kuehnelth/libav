@@ -1258,6 +1258,12 @@ typedef struct AVFrame {
      * decoding: set by AVCodecContext.get_buffer()
      */
     uint8_t **extended_data;
+    /*
+     * Metadata.
+     * - encoding: Set by user.
+     * - decoding: Set by libavcodec.
+     */
+    AVDictionary *metadata;
 } AVFrame;
 
 struct AVCodecInternal;
