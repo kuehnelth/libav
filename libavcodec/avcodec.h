@@ -1138,6 +1138,13 @@ typedef struct AVFrame {
      * - decoding: Set by libavcodec.
      */
     void *thread_opaque;
+
+    /**
+     * Metadata.
+     * - encoding: Set by user.
+     * - decoding: Set by libavcodec.
+     */
+    AVDictionary *metadata;
 } AVFrame;
 
 /**
