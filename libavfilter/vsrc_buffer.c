@@ -56,6 +56,7 @@ int av_vsrc_buffer_add_frame(AVFilterContext *buffer_filter, AVFrame *frame,
     c->frame.top_field_first = frame->top_field_first;
     c->frame.key_frame = frame->key_frame;
     c->frame.pict_type = frame->pict_type;
+    c->frame.metadata  = frame->metadata;
     c->pts = pts;
     c->pixel_aspect = pixel_aspect;
     c->has_frame = 1;
@@ -137,6 +138,8 @@ static int request_frame(AVFilterLink *link)
     picref->video->top_field_first = c->frame.top_field_first;
     picref->video->key_frame       = c->frame.key_frame;
     picref->video->pict_type       = c->frame.pict_type;
+    picref->metadata               = NULL;
+    av_dict_copy(&picref->metadata, c->frame.metadata, 0);
     avfilter_start_frame(link, avfilter_ref_buffer(picref, ~0));
     avfilter_draw_slice(link, 0, link->h, 1);
     avfilter_end_frame(link);

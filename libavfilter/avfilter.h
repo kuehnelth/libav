@@ -149,6 +149,7 @@ typedef struct AVFilterBufferRef {
     enum AVMediaType type;      ///< media type of buffer data
     AVFilterBufferRefVideoProps *video; ///< video buffer specific properties
     AVFilterBufferRefAudioProps *audio; ///< audio buffer specific properties
+    AVDictionary *metadata;
 } AVFilterBufferRef;
 
 /**

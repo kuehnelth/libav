@@ -64,6 +64,8 @@ AVFilterBufferRef *avfilter_ref_buffer(AVFilterBufferRef *ref, int pmask)
         }
         *ret->audio = *ref->audio;
     }
+    ret->metadata = NULL;
+    av_dict_copy(&ret->metadata, ref->metadata, 0);
     ret->perms &= pmask;
     ret->buf->refcount ++;
     return ret;
@@ -77,6 +79,7 @@ void avfilter_unref_buffer(AVFilterBufferRef *ref)
         ref->buf->free(ref->buf);
     av_free(ref->video);
     av_free(ref->audio);
+    av_dict_free(&ref->metadata);
     av_free(ref);
 }
 
