@@ -227,6 +227,8 @@ typedef struct OutputStream {
    int64_t sws_flags;
    AVDictionary *opts;
    int is_past_recording_time;
+
+   int drop_frame_metadata;
 } OutputStream;
 
 
@@ -283,6 +285,7 @@ typedef struct OptionsContext {
     int metadata_global_manual;
     int metadata_streams_manual;
     int metadata_chapters_manual;
+    int metadata_frames_manual;
 
     int chapters_input_file;
 
@@ -1779,6 +1782,8 @@ static int output_packet(InputStream *ist, int ist_index,
 #endif
                 os = output_files[ost->file_index].ctx;
 
+                if (ost->drop_frame_metadata)
+                    filtered_frame->metadata = NULL;
                 /* set the input output pts pairs */
                 //ost->sync_ipts = (double)(ist->pts + input_files[ist->file_index].ts_offset - start_time)/ AV_TIME_BASE;
 
@@ -2686,6 +2691,7 @@ static void parse_meta_type(char *arg, char *type, int *index)
         case 's':
         case 'c':
         case 'p':
+        case 'f':
             if (*(++arg) == ':')
                 *index = strtol(++arg, NULL, 0);
             break;
@@ -2721,6 +2727,8 @@ static int opt_map_metadata(OptionsContext *o, const char *opt, const char *arg)
         o->metadata_streams_manual = 1;
     if (m->type == 'c' || m1->type == 'c')
         o->metadata_chapters_manual = 1;
+    if (m->type == 'f' || m1->type == 'f')
+        o->metadata_frames_manual = 1;
 
     return 0;
 }
@@ -3639,7 +3647,14 @@ static void opt_output_file(void *optctx, const char *filename)
             }
         }
 
+        if (o->meta_data_maps[i][1].type == 'f' && o->meta_data_maps[i][1].index == -1) {
+            METADATA_CHECK_INDEX(i, nb_output_streams, "stream")
+            output_streams[i].drop_frame_metadata = 1;
+            continue;
+        }
+
         av_dict_copy(meta[0], *meta[1], AV_DICT_DONT_OVERWRITE);
+
     }
 
     /* copy global metadata by default */
